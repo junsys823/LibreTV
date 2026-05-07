@@ -1,5 +1,5 @@
 // 全局变量
-let selectedAPIs = JSON.parse(localStorage.getItem('selectedAPIs') || '["tyyszy","dyttzy", "bfzy", "ruyi"]'); // 默认选中资源
+let selectedAPIs = JSON.parse(localStorage.getItem('selectedAPIs') || '[]'); // 默认选中资源
 let customAPIs = JSON.parse(localStorage.getItem('customAPIs') || '[]'); // 存储自定义API列表
 
 // 添加当前播放的集数索引
@@ -10,9 +10,13 @@ let currentEpisodes = [];
 let currentVideoTitle = '';
 // 全局变量用于倒序状态
 let episodesReversed = false;
+let currentSearchResults = [];
 
 // 页面初始化
 document.addEventListener('DOMContentLoaded', function () {
+    // 清理不存在的数据源，并在首次加载时选中可用普通源
+    normalizeSelectedAPIs();
+
     // 初始化API复选框
     initAPICheckboxes();
 
@@ -27,9 +31,8 @@ document.addEventListener('DOMContentLoaded', function () {
 
     // 设置默认API选择（如果是第一次加载）
     if (!localStorage.getItem('hasInitializedDefaults')) {
-        // 默认选中资源
-        selectedAPIs = ["tyyszy", "bfzy", "dyttzy", "ruyi"];
-        localStorage.setItem('selectedAPIs', JSON.stringify(selectedAPIs));
+        normalizeSelectedAPIs(true);
+        initAPICheckboxes();
 
         // 默认选中过滤开关
         localStorage.setItem('yellowFilterEnabled', 'true');
@@ -61,6 +64,28 @@ document.addEventListener('DOMContentLoaded', function () {
     setTimeout(checkAdultAPIsSelected, 100);
 });
 
+function getDefaultSelectedAPIs() {
+    return Object.keys(API_SITES).filter(apiKey => !API_SITES[apiKey].adult);
+}
+
+function normalizeSelectedAPIs(forceDefault = false) {
+    const currentSourceSignature = getDefaultSelectedAPIs().join('|');
+    const storedSourceSignature = localStorage.getItem('apiSourceSignature');
+    const sourceListChanged = storedSourceSignature !== currentSourceSignature;
+    const validBuiltInApis = new Set(Object.keys(API_SITES));
+    const normalized = selectedAPIs.filter(apiId => {
+        if (validBuiltInApis.has(apiId)) return true;
+        if (!apiId.startsWith('custom_')) return false;
+
+        const customIndex = Number.parseInt(apiId.replace('custom_', ''), 10);
+        return Number.isInteger(customIndex) && customIndex >= 0 && customIndex < customAPIs.length;
+    });
+
+    selectedAPIs = (forceDefault || sourceListChanged || normalized.length === 0) ? getDefaultSelectedAPIs() : normalized;
+    localStorage.setItem('selectedAPIs', JSON.stringify(selectedAPIs));
+    localStorage.setItem('apiSourceSignature', currentSourceSignature);
+}
+
 // 初始化API复选框
 function initAPICheckboxes() {
     const container = document.getElementById('apiCheckboxes');
@@ -85,9 +110,9 @@ function initAPICheckboxes() {
         const checkbox = document.createElement('div');
         checkbox.className = 'flex items-center';
         checkbox.innerHTML = `
-            <input type="checkbox" id="api_${apiKey}" 
-                   class="form-checkbox h-3 w-3 text-blue-600 bg-[#222] border border-[#333]" 
-                   ${checked ? 'checked' : ''} 
+            <input type="checkbox" id="api_${apiKey}"
+                   class="form-checkbox h-3 w-3 text-blue-600 bg-[#222] border border-[#333]"
+                   ${checked ? 'checked' : ''}
                    data-api="${apiKey}">
             <label for="api_${apiKey}" class="ml-1 text-xs text-gray-400 truncate">${api.name}</label>
         `;
@@ -137,9 +162,9 @@ function addAdultAPI() {
             const checkbox = document.createElement('div');
             checkbox.className = 'flex items-center';
             checkbox.innerHTML = `
-                <input type="checkbox" id="api_${apiKey}" 
-                       class="form-checkbox h-3 w-3 text-blue-600 bg-[#222] border border-[#333] api-adult" 
-                       ${checked ? 'checked' : ''} 
+                <input type="checkbox" id="api_${apiKey}"
+                       class="form-checkbox h-3 w-3 text-blue-600 bg-[#222] border border-[#333] api-adult"
+                       ${checked ? 'checked' : ''}
                        data-api="${apiKey}">
                 <label for="api_${apiKey}" class="ml-1 text-xs text-pink-400 truncate">${api.name}</label>
             `;
@@ -226,9 +251,9 @@ function renderCustomAPIsList() {
         const detailLine = api.detail ? `<div class="text-xs text-gray-400 truncate">detail: ${api.detail}</div>` : '';
         apiItem.innerHTML = `
             <div class="flex items-center flex-1 min-w-0">
-                <input type="checkbox" id="custom_api_${index}" 
-                       class="form-checkbox h-3 w-3 text-blue-600 mr-1 ${api.isAdult ? 'api-adult' : ''}" 
-                       ${selectedAPIs.includes('custom_' + index) ? 'checked' : ''} 
+                <input type="checkbox" id="custom_api_${index}"
+                       class="form-checkbox h-3 w-3 text-blue-600 mr-1 ${api.isAdult ? 'api-adult' : ''}"
+                       ${selectedAPIs.includes('custom_' + index) ? 'checked' : ''}
                        data-custom-index="${index}">
                 <div class="flex-1 min-w-0">
                     <div class="text-xs font-medium ${textColorClass} truncate">
@@ -642,7 +667,7 @@ async function search() {
 
         // 从所有选中的API源搜索
         let allResults = [];
-        const searchPromises = selectedAPIs.map(apiId => 
+        const searchPromises = selectedAPIs.map(apiId =>
             searchByAPIAndKeyWord(apiId, query)
         );
 
@@ -661,16 +686,10 @@ async function search() {
             // 首先按照视频名称排序
             const nameCompare = (a.vod_name || '').localeCompare(b.vod_name || '');
             if (nameCompare !== 0) return nameCompare;
-            
+
             // 如果名称相同，则按照来源排序
             return (a.source_name || '').localeCompare(b.source_name || '');
         });
-
-        // 更新搜索结果计数
-        const searchResultsCount = document.getElementById('searchResultsCount');
-        if (searchResultsCount) {
-            searchResultsCount.textContent = allResults.length;
-        }
 
         // 显示结果区域，调整搜索区域
         document.getElementById('searchArea').classList.remove('flex-1');
@@ -685,39 +704,6 @@ async function search() {
 
         const resultsDiv = document.getElementById('results');
 
-        // 如果没有结果
-        if (!allResults || allResults.length === 0) {
-            resultsDiv.innerHTML = `
-                <div class="col-span-full text-center py-16">
-                    <svg class="mx-auto h-12 w-12 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" 
-                              d="M9.172 16.172a4 4 0 015.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                    </svg>
-                    <h3 class="mt-2 text-lg font-medium text-gray-400">没有找到匹配的结果</h3>
-                    <p class="mt-1 text-sm text-gray-500">请尝试其他关键词或更换数据源</p>
-                </div>
-            `;
-            hideLoading();
-            return;
-        }
-
-        // 有搜索结果时，才更新URL
-        try {
-            // 使用URI编码确保特殊字符能够正确显示
-            const encodedQuery = encodeURIComponent(query);
-            // 使用HTML5 History API更新URL，不刷新页面
-            window.history.pushState(
-                { search: query },
-                `搜索: ${query} - LibreTV`,
-                `/s=${encodedQuery}`
-            );
-            // 更新页面标题
-            document.title = `搜索: ${query} - LibreTV`;
-        } catch (e) {
-            console.error('更新浏览器历史失败:', e);
-            // 如果更新URL失败，继续执行搜索
-        }
-
         // 处理搜索结果过滤：如果启用了黄色内容过滤，则过滤掉分类含有敏感内容的项目
         const yellowFilterEnabled = localStorage.getItem('yellowFilterEnabled') === 'true';
         if (yellowFilterEnabled) {
@@ -728,76 +714,29 @@ async function search() {
             });
         }
 
-        // 添加XSS保护，使用textContent和属性转义
-        const safeResults = allResults.map(item => {
-            const safeId = item.vod_id ? item.vod_id.toString().replace(/[^\w-]/g, '') : '';
-            const safeName = (item.vod_name || '').toString()
-                .replace(/</g, '&lt;')
-                .replace(/>/g, '&gt;')
-                .replace(/"/g, '&quot;');
-            const sourceInfo = item.source_name ?
-                `<span class="bg-[#222] text-xs px-1.5 py-0.5 rounded-full">${item.source_name}</span>` : '';
-            const sourceCode = item.source_code || '';
+        currentSearchResults = allResults;
+        renderSearchRefinementControls(currentSearchResults);
 
-            // 添加API URL属性，用于详情获取
-            const apiUrlAttr = item.api_url ?
-                `data-api-url="${item.api_url.replace(/"/g, '&quot;')}"` : '';
+        // 有搜索结果时，才更新URL
+        if (currentSearchResults.length > 0) {
+            try {
+                // 使用URI编码确保特殊字符能够正确显示
+                const encodedQuery = encodeURIComponent(query);
+                // 使用HTML5 History API更新URL，不刷新页面
+                window.history.pushState(
+                    { search: query },
+                    `搜索: ${query} - LibreTV`,
+                    `/s=${encodedQuery}`
+                );
+                // 更新页面标题
+                document.title = `搜索: ${query} - LibreTV`;
+            } catch (e) {
+                console.error('更新浏览器历史失败:', e);
+                // 如果更新URL失败，继续执行搜索
+            }
+        }
 
-            // 修改为水平卡片布局，图片在左侧，文本在右侧，并优化样式
-            const hasCover = item.vod_pic && item.vod_pic.startsWith('http');
-
-            return `
-                <div class="card-hover bg-[#111] rounded-lg overflow-hidden cursor-pointer transition-all hover:scale-[1.02] h-full shadow-sm hover:shadow-md" 
-                     onclick="showDetails('${safeId}','${safeName}','${sourceCode}')" ${apiUrlAttr}>
-                    <div class="flex h-full">
-                        ${hasCover ? `
-                        <div class="relative flex-shrink-0 search-card-img-container">
-                            <img src="${item.vod_pic}" alt="${safeName}" 
-                                 class="h-full w-full object-cover transition-transform hover:scale-110" 
-                                 onerror="this.onerror=null; this.src='https://via.placeholder.com/300x450?text=无封面'; this.classList.add('object-contain');" 
-                                 loading="lazy">
-                            <div class="absolute inset-0 bg-gradient-to-r from-black/30 to-transparent"></div>
-                        </div>` : ''}
-                        
-                        <div class="p-2 flex flex-col flex-grow">
-                            <div class="flex-grow">
-                                <h3 class="font-semibold mb-2 break-words line-clamp-2 ${hasCover ? '' : 'text-center'}" title="${safeName}">${safeName}</h3>
-                                
-                                <div class="flex flex-wrap ${hasCover ? '' : 'justify-center'} gap-1 mb-2">
-                                    ${(item.type_name || '').toString().replace(/</g, '&lt;') ?
-                    `<span class="text-xs py-0.5 px-1.5 rounded bg-opacity-20 bg-blue-500 text-blue-300">
-                                          ${(item.type_name || '').toString().replace(/</g, '&lt;')}
-                                      </span>` : ''}
-                                    ${(item.vod_year || '') ?
-                    `<span class="text-xs py-0.5 px-1.5 rounded bg-opacity-20 bg-purple-500 text-purple-300">
-                                          ${item.vod_year}
-                                      </span>` : ''}
-                                </div>
-                                <p class="text-gray-400 line-clamp-2 overflow-hidden ${hasCover ? '' : 'text-center'} mb-2">
-                                    ${(item.vod_remarks || '暂无介绍').toString().replace(/</g, '&lt;')}
-                                </p>
-                            </div>
-                            
-                            <div class="flex justify-between items-center mt-1 pt-1 border-t border-gray-800">
-                                ${sourceInfo ? `<div>${sourceInfo}</div>` : '<div></div>'}
-                                <!-- 接口名称过长会被挤变形
-                                <div>
-                                    <span class="text-gray-500 flex items-center hover:text-blue-400 transition-colors">
-                                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
-                                        </svg>
-                                        播放
-                                    </span>
-                                </div>
-                                -->
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            `;
-        }).join('');
-
-        resultsDiv.innerHTML = safeResults;
+        renderSearchResults(currentSearchResults, resultsDiv);
     } catch (error) {
         console.error('搜索错误:', error);
         if (error.name === 'AbortError') {
@@ -808,6 +747,189 @@ async function search() {
     } finally {
         hideLoading();
     }
+}
+
+function escapeHTML(value) {
+    return String(value || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function getResultValue(item, key) {
+    return (item[key] || '').toString().trim();
+}
+
+function getUniqueResultValues(results, key) {
+    return [...new Set(results.map(item => getResultValue(item, key)).filter(Boolean))]
+        .sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'));
+}
+
+function renderSearchRefinementControls(results) {
+    const controls = document.getElementById('resultRefinementControls');
+    if (!controls) return;
+
+    const sourceOptions = getUniqueResultValues(results, 'source_name')
+        .map(value => `<option value="${escapeHTML(value)}">${escapeHTML(value)}</option>`)
+        .join('');
+    const typeOptions = getUniqueResultValues(results, 'type_name')
+        .map(value => `<option value="${escapeHTML(value)}">${escapeHTML(value)}</option>`)
+        .join('');
+    const yearOptions = getUniqueResultValues(results, 'vod_year')
+        .sort((a, b) => b.localeCompare(a))
+        .map(value => `<option value="${escapeHTML(value)}">${escapeHTML(value)}</option>`)
+        .join('');
+
+    controls.innerHTML = `
+        <select id="resultSourceFilter" class="result-filter-select" aria-label="按来源筛选">
+            <option value="">全部来源</option>
+            ${sourceOptions}
+        </select>
+        <select id="resultTypeFilter" class="result-filter-select" aria-label="按分类筛选">
+            <option value="">全部分类</option>
+            ${typeOptions}
+        </select>
+        <select id="resultYearFilter" class="result-filter-select" aria-label="按年份筛选">
+            <option value="">全部年份</option>
+            ${yearOptions}
+        </select>
+        <select id="resultSortSelect" class="result-filter-select" aria-label="结果排序">
+            <option value="name">名称排序</option>
+            <option value="year-desc">年份新到旧</option>
+            <option value="year-asc">年份旧到新</option>
+            <option value="source">来源排序</option>
+        </select>
+    `;
+
+    controls.classList.toggle('hidden', results.length === 0);
+    ['resultSourceFilter', 'resultTypeFilter', 'resultYearFilter', 'resultSortSelect'].forEach(id => {
+        const select = document.getElementById(id);
+        if (select) select.addEventListener('change', applySearchRefinements);
+    });
+}
+
+function applySearchRefinements() {
+    const source = document.getElementById('resultSourceFilter')?.value || '';
+    const type = document.getElementById('resultTypeFilter')?.value || '';
+    const year = document.getElementById('resultYearFilter')?.value || '';
+    const sortMode = document.getElementById('resultSortSelect')?.value || 'name';
+
+    let refinedResults = currentSearchResults.filter(item => {
+        return (!source || getResultValue(item, 'source_name') === source) &&
+            (!type || getResultValue(item, 'type_name') === type) &&
+            (!year || getResultValue(item, 'vod_year') === year);
+    });
+
+    refinedResults = sortSearchResults(refinedResults, sortMode);
+    renderSearchResults(refinedResults);
+}
+
+function sortSearchResults(results, sortMode) {
+    return [...results].sort((a, b) => {
+        if (sortMode === 'year-desc' || sortMode === 'year-asc') {
+            const yearA = Number.parseInt(getResultValue(a, 'vod_year'), 10) || 0;
+            const yearB = Number.parseInt(getResultValue(b, 'vod_year'), 10) || 0;
+            const yearCompare = sortMode === 'year-desc' ? yearB - yearA : yearA - yearB;
+            if (yearCompare !== 0) return yearCompare;
+        }
+
+        if (sortMode === 'source') {
+            const sourceCompare = getResultValue(a, 'source_name').localeCompare(getResultValue(b, 'source_name'), 'zh-Hans-CN');
+            if (sourceCompare !== 0) return sourceCompare;
+        }
+
+        const nameCompare = getResultValue(a, 'vod_name').localeCompare(getResultValue(b, 'vod_name'), 'zh-Hans-CN');
+        if (nameCompare !== 0) return nameCompare;
+        return getResultValue(a, 'source_name').localeCompare(getResultValue(b, 'source_name'), 'zh-Hans-CN');
+    });
+}
+
+function renderSearchResults(results, resultsDiv = document.getElementById('results')) {
+    if (!resultsDiv) return;
+
+    const searchResultsCount = document.getElementById('searchResultsCount');
+    if (searchResultsCount) {
+        searchResultsCount.textContent = results.length;
+    }
+
+    if (!results || results.length === 0) {
+        resultsDiv.innerHTML = `
+            <div class="col-span-full text-center py-16">
+                <svg class="mx-auto h-12 w-12 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                          d="M9.172 16.172a4 4 0 015.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <h3 class="mt-2 text-lg font-medium text-gray-400">没有找到匹配的结果</h3>
+                <p class="mt-1 text-sm text-gray-500">请尝试其他关键词、更换数据源或调整筛选条件</p>
+            </div>
+        `;
+        return;
+    }
+
+    const safeResults = results.map(item => {
+        const safeId = item.vod_id ? item.vod_id.toString().replace(/[^\w-]/g, '') : '';
+        const safeName = escapeHTML(item.vod_name || '');
+        const sourceName = escapeHTML(item.source_name || '');
+        const sourceInfo = sourceName ?
+            `<span class="bg-[#222] text-xs px-1.5 py-0.5 rounded-full">${sourceName}</span>` : '';
+        const sourceCode = escapeHTML(item.source_code || '');
+
+        // 添加API URL属性，用于详情获取
+        const apiUrlAttr = item.api_url ?
+            `data-api-url="${escapeHTML(item.api_url)}"` : '';
+
+        // 修改为水平卡片布局，图片在左侧，文本在右侧，并优化样式
+        const hasCover = item.vod_pic && item.vod_pic.startsWith('http');
+
+        return `
+            <div class="search-result-card card-hover bg-[#111] rounded-lg overflow-hidden cursor-pointer transition-all hover:scale-[1.02] h-full shadow-sm hover:shadow-md"
+                 data-id="${safeId}" data-name="${safeName}" data-source-code="${sourceCode}" ${apiUrlAttr}>
+                <div class="flex h-full">
+                    ${hasCover ? `
+                    <div class="relative flex-shrink-0 search-card-img-container">
+                        <img src="${escapeHTML(item.vod_pic)}" alt="${safeName}"
+                             class="h-full w-full object-cover transition-transform hover:scale-110"
+                             onerror="this.onerror=null; this.src='https://via.placeholder.com/300x450?text=无封面'; this.classList.add('object-contain');"
+                             loading="lazy">
+                        <div class="absolute inset-0 bg-gradient-to-r from-black/30 to-transparent"></div>
+                    </div>` : ''}
+
+                    <div class="p-2 flex flex-col flex-grow">
+                        <div class="flex-grow">
+                            <h3 class="font-semibold mb-2 break-words line-clamp-2 ${hasCover ? '' : 'text-center'}" title="${safeName}">${safeName}</h3>
+
+                            <div class="flex flex-wrap ${hasCover ? '' : 'justify-center'} gap-1 mb-2">
+                                ${getResultValue(item, 'type_name') ?
+                `<span class="text-xs py-0.5 px-1.5 rounded bg-opacity-20 bg-blue-500 text-blue-300">
+                                      ${escapeHTML(item.type_name)}
+                                  </span>` : ''}
+                                ${getResultValue(item, 'vod_year') ?
+                `<span class="text-xs py-0.5 px-1.5 rounded bg-opacity-20 bg-purple-500 text-purple-300">
+                                      ${escapeHTML(item.vod_year)}
+                                  </span>` : ''}
+                            </div>
+                            <p class="text-gray-400 line-clamp-2 overflow-hidden ${hasCover ? '' : 'text-center'} mb-2">
+                                ${escapeHTML(item.vod_remarks || '暂无介绍')}
+                            </p>
+                        </div>
+
+                        <div class="flex justify-between items-center mt-1 pt-1 border-t border-gray-800">
+                            ${sourceInfo ? `<div>${sourceInfo}</div>` : '<div></div>'}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+    }).join('');
+
+    resultsDiv.innerHTML = safeResults;
+    resultsDiv.querySelectorAll('.search-result-card').forEach(card => {
+        card.addEventListener('click', () => {
+            showDetails(card.dataset.id || '', card.dataset.name || '', card.dataset.sourceCode || '');
+        });
+    });
 }
 
 // 切换清空按钮的显示状态
@@ -951,7 +1073,7 @@ async function showDetails(id, vod_name, sourceCode) {
                 ${detailInfoHtml}
                 <div class="flex flex-wrap items-center justify-between mb-4 gap-2">
                     <div class="flex items-center gap-2">
-                        <button onclick="toggleEpisodeOrder('${sourceCode}', '${id}')" 
+                        <button onclick="toggleEpisodeOrder('${sourceCode}', '${id}')"
                                 class="px-3 py-1.5 bg-[#333] hover:bg-[#444] border border-[#444] rounded text-sm transition-colors flex items-center gap-1">
                             <svg class="w-4 h-4 transform ${episodesReversed ? 'rotate-180' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 14l-7 7m0 0l-7-7m7 7V3"></path>
@@ -1098,7 +1220,7 @@ function renderEpisodes(vodName, sourceCode, vodId) {
         // 根据倒序状态计算真实的剧集索引
         const realIndex = episodesReversed ? currentEpisodes.length - 1 - index : index;
         return `
-            <button id="episode-${realIndex}" onclick="playVideo('${episode}','${vodName.replace(/"/g, '&quot;')}', '${sourceCode}', ${realIndex}, '${vodId}')" 
+            <button id="episode-${realIndex}" onclick="playVideo('${episode}','${vodName.replace(/"/g, '&quot;')}', '${sourceCode}', ${realIndex}, '${vodId}')"
                     class="px-4 py-2 bg-[#222] hover:bg-[#333] border border-[#333] rounded-lg transition-colors text-center episode-btn">
                 ${realIndex + 1}
             </button>
@@ -1152,14 +1274,14 @@ async function importConfigFromUrl() {
     modal.innerHTML = `
         <div class="bg-[#191919] rounded-lg p-6 max-w-md w-full max-h-[90vh] overflow-y-auto relative">
             <button id="closeUrlModal" class="absolute top-4 right-4 text-gray-400 hover:text-white text-xl">&times;</button>
-            
+
             <h3 class="text-xl font-bold mb-4">从URL导入配置</h3>
-            
+
             <div class="mb-4">
-                <input type="text" id="configUrl" placeholder="输入配置文件URL" 
+                <input type="text" id="configUrl" placeholder="输入配置文件URL"
                        class="w-full px-3 py-2 bg-[#222] border border-[#333] rounded-lg text-white focus:outline-none focus:ring-1 focus:ring-blue-500">
             </div>
-            
+
             <div class="flex justify-end space-x-2">
                 <button id="confirmUrlImport" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded">导入</button>
                 <button id="cancelUrlImport" class="bg-[#444] hover:bg-[#555] text-white px-4 py-2 rounded">取消</button>

@@ -6,28 +6,52 @@
 // 从全局配置获取密码哈希（如果存在）
 let cachedPasswordHash = null;
 
+function isValidPasswordHash(hash) {
+    return typeof hash === 'string' && /^[a-f0-9]{64}$/i.test(hash);
+}
+
 /**
  * 获取当前会话的密码哈希
  */
 async function getPasswordHash() {
-    if (cachedPasswordHash) {
+    if (isValidPasswordHash(cachedPasswordHash)) {
         return cachedPasswordHash;
     }
     
     // 1. 优先从已存储的代理鉴权哈希获取
     const storedHash = localStorage.getItem('proxyAuthHash');
-    if (storedHash) {
+    if (isValidPasswordHash(storedHash)) {
         cachedPasswordHash = storedHash;
         return storedHash;
+    } else if (storedHash) {
+        localStorage.removeItem('proxyAuthHash');
     }
     
     // 2. 尝试从密码验证状态获取（password.js 验证后存储的哈希）
-    const passwordVerified = localStorage.getItem('passwordVerified');
-    const storedPasswordHash = localStorage.getItem('passwordHash');
-    if (passwordVerified === 'true' && storedPasswordHash) {
-        localStorage.setItem('proxyAuthHash', storedPasswordHash);
-        cachedPasswordHash = storedPasswordHash;
-        return storedPasswordHash;
+    const passwordStateKey = window.PASSWORD_CONFIG?.localStorageKey || 'passwordVerified';
+    const passwordState = localStorage.getItem(passwordStateKey);
+    if (passwordState) {
+        try {
+            const parsedState = JSON.parse(passwordState);
+            const storedPasswordHash = parsedState.passwordHash;
+            const isFresh = parsedState.timestamp &&
+                (!window.PASSWORD_CONFIG?.verificationTTL ||
+                    Date.now() - parsedState.timestamp < window.PASSWORD_CONFIG.verificationTTL);
+
+            if (parsedState.verified && isValidPasswordHash(storedPasswordHash) && isFresh) {
+                localStorage.setItem('proxyAuthHash', storedPasswordHash);
+                cachedPasswordHash = storedPasswordHash;
+                return storedPasswordHash;
+            }
+        } catch (error) {
+            // 兼容旧版存储格式：passwordVerified=true + passwordHash=...
+            const storedPasswordHash = localStorage.getItem('passwordHash');
+            if (passwordState === 'true' && isValidPasswordHash(storedPasswordHash)) {
+                localStorage.setItem('proxyAuthHash', storedPasswordHash);
+                cachedPasswordHash = storedPasswordHash;
+                return storedPasswordHash;
+            }
+        }
     }
     
     // 3. 尝试从用户输入的密码生成哈希
@@ -37,16 +61,18 @@ async function getPasswordHash() {
             // 动态导入 sha256 函数
             const { sha256 } = await import('./sha256.js');
             const hash = await sha256(userPassword);
-            localStorage.setItem('proxyAuthHash', hash);
-            cachedPasswordHash = hash;
-            return hash;
+            if (isValidPasswordHash(hash)) {
+                localStorage.setItem('proxyAuthHash', hash);
+                cachedPasswordHash = hash;
+                return hash;
+            }
         } catch (error) {
             console.error('生成密码哈希失败:', error);
         }
     }
     
     // 4. 如果用户没有设置密码，尝试使用环境变量中的密码哈希
-    if (window.__ENV__ && window.__ENV__.PASSWORD) {
+    if (window.__ENV__ && isValidPasswordHash(window.__ENV__.PASSWORD)) {
         cachedPasswordHash = window.__ENV__.PASSWORD;
         return window.__ENV__.PASSWORD;
     }

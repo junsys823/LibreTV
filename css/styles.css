@@ -894,6 +894,38 @@ body {
     }
 }
 
+.result-toolbar {
+    min-height: 2.25rem;
+}
+
+.result-filter-select {
+    width: 8.5rem;
+    max-width: 100%;
+    border: 1px solid #333;
+    border-radius: 0.5rem;
+    background: #111;
+    color: #e5e7eb;
+    font-size: 0.8125rem;
+    line-height: 1.25rem;
+    padding: 0.45rem 0.65rem;
+    outline: none;
+    transition: border-color 0.2s ease, background-color 0.2s ease;
+}
+
+.result-filter-select:hover,
+.result-filter-select:focus {
+    border-color: #666;
+    background: #171717;
+}
+
+@media (max-width: 640px) {
+    .result-filter-select {
+        flex: 1 1 calc(50% - 0.5rem);
+        width: auto;
+        min-width: 0;
+    }
+}
+
 /* 优化卡片内元素间距 */
 .card-hover .p-2 {
     padding: 0.75rem; /* 增加内边距 */

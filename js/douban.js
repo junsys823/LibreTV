@@ -499,6 +499,57 @@ async function fetchDoubanData(url) {
     }
 }
 
+function escapeDoubanHTML(value) {
+    return String(value || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function buildDoubanProxyUrl(targetUrl) {
+    if (!targetUrl) return '';
+
+    const encodedProxyUrl = PROXY_URL + encodeURIComponent(targetUrl);
+    const envPasswordHash = window.__ENV__?.PASSWORD;
+    if (/^[a-f0-9]{64}$/i.test(envPasswordHash || '')) {
+        const separator = encodedProxyUrl.includes('?') ? '&' : '?';
+        return `${encodedProxyUrl}${separator}auth=${encodeURIComponent(envPasswordHash)}&t=${Date.now()}`;
+    }
+
+    return encodedProxyUrl;
+}
+
+function createDoubanPlaceholder(title) {
+    const safeTitle = String(title || 'LibreTV').slice(0, 20);
+    const svg = `
+        <svg xmlns="http://www.w3.org/2000/svg" width="320" height="480" viewBox="0 0 320 480">
+            <rect width="320" height="480" fill="#171717"/>
+            <rect x="28" y="34" width="264" height="412" rx="14" fill="#222" stroke="#3a3a3a"/>
+            <path d="M118 208h84v64h-84z" fill="#2f2f2f"/>
+            <path d="M132 252l23-28 17 20 12-14 20 22z" fill="#555"/>
+            <circle cx="181" cy="225" r="8" fill="#777"/>
+            <text x="160" y="314" fill="#aaa" font-size="18" text-anchor="middle" font-family="Arial, sans-serif">暂无封面</text>
+            <text x="160" y="344" fill="#777" font-size="14" text-anchor="middle" font-family="Arial, sans-serif">${escapeDoubanHTML(safeTitle)}</text>
+        </svg>
+    `;
+
+    return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+}
+
+function handleDoubanImageError(img) {
+    if (!img.dataset.proxyTried && img.dataset.proxySrc) {
+        img.dataset.proxyTried = 'true';
+        img.src = img.dataset.proxySrc;
+        return;
+    }
+
+    img.onerror = null;
+    img.src = img.dataset.fallbackSrc || createDoubanPlaceholder(img.alt);
+    img.classList.add('object-contain', 'bg-[#171717]');
+}
+
 // 抽取渲染豆瓣卡片的逻辑到单独函数
 function renderDoubanCards(data, container) {
     // 创建文档片段以提高性能
@@ -519,35 +570,30 @@ function renderDoubanCards(data, container) {
             card.className = "bg-[#111] hover:bg-[#222] transition-all duration-300 rounded-lg overflow-hidden flex flex-col transform hover:scale-105 shadow-md hover:shadow-lg";
             
             // 生成卡片内容，确保安全显示（防止XSS）
-            const safeTitle = item.title
-                .replace(/</g, '&lt;')
-                .replace(/>/g, '&gt;')
-                .replace(/"/g, '&quot;');
+            const safeTitle = escapeDoubanHTML(item.title);
             
-            const safeRate = (item.rate || "暂无")
-                .replace(/</g, '&lt;')
-                .replace(/>/g, '&gt;');
+            const safeRate = escapeDoubanHTML(item.rate || "暂无");
             
             // 处理图片URL
-            // 1. 直接使用豆瓣图片URL (添加no-referrer属性)
             const originalCoverUrl = item.cover;
-            
-            // 2. 也准备代理URL作为备选
-            const proxiedCoverUrl = PROXY_URL + encodeURIComponent(originalCoverUrl);
+            const proxiedCoverUrl = buildDoubanProxyUrl(originalCoverUrl);
+            const placeholderUrl = createDoubanPlaceholder(item.title);
             
             // 为不同设备优化卡片布局
             card.innerHTML = `
                 <div class="relative w-full aspect-[2/3] overflow-hidden cursor-pointer" onclick="fillAndSearchWithDouban('${safeTitle}')">
-                    <img src="${originalCoverUrl}" alt="${safeTitle}" 
+                    <img src="${escapeDoubanHTML(originalCoverUrl)}" alt="${safeTitle}"
+                        data-proxy-src="${escapeDoubanHTML(proxiedCoverUrl)}"
+                        data-fallback-src="${escapeDoubanHTML(placeholderUrl)}"
                         class="w-full h-full object-cover transition-transform duration-500 hover:scale-110"
-                        onerror="this.onerror=null; this.src='${proxiedCoverUrl}'; this.classList.add('object-contain');"
+                        onerror="handleDoubanImageError(this)"
                         loading="lazy" referrerpolicy="no-referrer">
                     <div class="absolute inset-0 bg-gradient-to-t from-black to-transparent opacity-60"></div>
                     <div class="absolute bottom-2 left-2 bg-black/70 text-white text-xs px-2 py-1 rounded-sm">
                         <span class="text-yellow-400">★</span> ${safeRate}
                     </div>
                     <div class="absolute bottom-2 right-2 bg-black/70 text-white text-xs px-2 py-1 rounded-sm hover:bg-[#333] transition-colors">
-                        <a href="${item.url}" target="_blank" rel="noopener noreferrer" title="在豆瓣查看" onclick="event.stopPropagation();">
+                        <a href="${escapeDoubanHTML(item.url)}" target="_blank" rel="noopener noreferrer" title="在豆瓣查看" onclick="event.stopPropagation();">
                             🔗
                         </a>
                     </div>

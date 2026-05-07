@@ -1,3 +1,25 @@
+async function buildAuthenticatedProxyUrl(targetUrl) {
+    const encodedProxyUrl = PROXY_URL + encodeURIComponent(targetUrl);
+    const envPasswordHash = window.__ENV__?.PASSWORD;
+    if (/^[a-f0-9]{64}$/i.test(envPasswordHash || '')) {
+        const separator = encodedProxyUrl.includes('?') ? '&' : '?';
+        return `${encodedProxyUrl}${separator}auth=${encodeURIComponent(envPasswordHash)}&t=${Date.now()}`;
+    }
+    console.warn('未找到有效的环境密码哈希，代理请求可能会被拒绝');
+
+    if (window.ProxyAuth?.addAuthToProxyUrl) {
+        const proxiedUrl = await window.ProxyAuth.addAuthToProxyUrl(encodedProxyUrl);
+        try {
+            const authValue = new URL(proxiedUrl, window.location.origin).searchParams.get('auth');
+            if (/^[a-f0-9]{64}$/i.test(authValue || '')) return proxiedUrl;
+        } catch (error) {
+            console.warn('代理鉴权URL解析失败，尝试使用环境变量鉴权:', error);
+        }
+    }
+
+    return encodedProxyUrl;
+}
+
 async function searchByAPIAndKeyWord(apiId, query) {
     try {
         let apiUrl, apiName, apiBaseUrl;
@@ -24,9 +46,7 @@ async function searchByAPIAndKeyWord(apiId, query) {
         const timeoutId = setTimeout(() => controller.abort(), 15000);
         
         // 添加鉴权参数到代理URL
-        const proxiedUrl = await window.ProxyAuth?.addAuthToProxyUrl ? 
-            await window.ProxyAuth.addAuthToProxyUrl(PROXY_URL + encodeURIComponent(apiUrl)) :
-            PROXY_URL + encodeURIComponent(apiUrl);
+        const proxiedUrl = await buildAuthenticatedProxyUrl(apiUrl);
         
         const response = await fetch(proxiedUrl, {
             headers: API_CONFIG.search.headers,
@@ -75,9 +95,7 @@ async function searchByAPIAndKeyWord(apiId, query) {
                         const pageTimeoutId = setTimeout(() => pageController.abort(), 15000);
                         
                         // 添加鉴权参数到代理URL
-                        const proxiedPageUrl = await window.ProxyAuth?.addAuthToProxyUrl ? 
-                            await window.ProxyAuth.addAuthToProxyUrl(PROXY_URL + encodeURIComponent(pageUrl)) :
-                            PROXY_URL + encodeURIComponent(pageUrl);
+                        const proxiedPageUrl = await buildAuthenticatedProxyUrl(pageUrl);
                         
                         const pageResponse = await fetch(proxiedPageUrl, {
                             headers: API_CONFIG.search.headers,
