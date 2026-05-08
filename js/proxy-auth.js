@@ -14,6 +14,36 @@ function isValidPasswordHash(hash) {
  * 获取当前会话的密码哈希
  */
 async function getPasswordHash() {
+    const envPasswordHash = window.__ENV__?.PASSWORD;
+    if (isValidPasswordHash(envPasswordHash)) {
+        const passwordStateKey = window.PASSWORD_CONFIG?.localStorageKey || 'passwordVerified';
+        const storedHash = localStorage.getItem('proxyAuthHash');
+        const passwordState = localStorage.getItem(passwordStateKey);
+
+        if (storedHash && storedHash !== envPasswordHash) {
+            localStorage.removeItem('proxyAuthHash');
+        }
+
+        if (passwordState) {
+            try {
+                const parsedState = JSON.parse(passwordState);
+                if (parsedState.passwordHash && parsedState.passwordHash !== envPasswordHash) {
+                    localStorage.removeItem(passwordStateKey);
+                }
+            } catch (error) {
+                const legacyPasswordHash = localStorage.getItem('passwordHash');
+                if (legacyPasswordHash && legacyPasswordHash !== envPasswordHash) {
+                    localStorage.removeItem(passwordStateKey);
+                    localStorage.removeItem('passwordHash');
+                }
+            }
+        }
+
+        cachedPasswordHash = envPasswordHash;
+        localStorage.setItem('proxyAuthHash', envPasswordHash);
+        return envPasswordHash;
+    }
+
     if (isValidPasswordHash(cachedPasswordHash)) {
         return cachedPasswordHash;
     }
@@ -69,12 +99,6 @@ async function getPasswordHash() {
         } catch (error) {
             console.error('生成密码哈希失败:', error);
         }
-    }
-    
-    // 4. 如果用户没有设置密码，尝试使用环境变量中的密码哈希
-    if (window.__ENV__ && isValidPasswordHash(window.__ENV__.PASSWORD)) {
-        cachedPasswordHash = window.__ENV__.PASSWORD;
-        return window.__ENV__.PASSWORD;
     }
     
     return null;
